@@ -153,7 +153,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Bearer oq7R83m4CSafzcsn5VnT2jgVtbLwhHKwHw3pZkikQITyvqeQdS4kZ8j33dXkpSpxZlvez2Qb6qpg1Jy0P48RwCp3bekyWqqehXRxbTixzzlz3zhWfzvj3zJBDKjbnG14qQYxDKLVhg7HrlsjTKyvHAdB04t89/1O/w1cDnyilFU="
+              "value": "Bearer Channel-access-token"
             },
             {
               "name": "Content-Type",
