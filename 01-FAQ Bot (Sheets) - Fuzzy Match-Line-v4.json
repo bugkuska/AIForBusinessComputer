@@ -1,0 +1,295 @@
+{
+  "name": "FAQ Bot (Sheets) - Fuzzy Match-Line-v4",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/chat",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1520,
+        192
+      ],
+      "id": "8f6a4f90-3193-45c7-b0d3-8f453cf72303",
+      "name": "LINE Webhook Trigger",
+      "webhookId": "8f14d9d7-a1b2-4488-bba1-73e61dea68fd"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================================\n// Normalize LINE Message\n// สำหรับ LINE Chatbot + Fuzzy Logic\n// ======================================================\n\nconst src = $input.first().json || {};\n\n// Webhook ของ n8n จะเก็บ LINE payload ไว้ใน body\nconst body = src.body || src;\n\n// ดึง event แรก\nconst events = Array.isArray(body.events) ? body.events : [];\nconst event = events[0] || {};\n\n// ------------------------------------------------------\n// ข้อมูล Event\n// ------------------------------------------------------\n\nconst eventType = event.type || \"\";\nconst messageType = event.message?.type || \"\";\n\nconst replyToken = event.replyToken || \"\";\n\nconst userId =\n  event.source?.userId ||\n  event.source?.groupId ||\n  event.source?.roomId ||\n  \"\";\n\n// ------------------------------------------------------\n// ข้อความจากผู้ใช้\n// ------------------------------------------------------\n\nlet userTextRaw = \"\";\n\nif (\n  eventType === \"message\" &&\n  messageType === \"text\"\n) {\n  userTextRaw = String(event.message?.text || \"\");\n}\n\n// ------------------------------------------------------\n// Normalize Text\n// ------------------------------------------------------\n\nfunction normalizeText(text) {\n  return String(text || \"\")\n\n    // Unicode normalization\n    .normalize(\"NFKC\")\n\n    // ลบ zero-width space\n    .replace(/\\u200B/g, \"\")\n\n    // จัด quote ให้เป็นมาตรฐาน\n    .replace(/[“”]/g, '\"')\n    .replace(/[‘’]/g, \"'\")\n\n    // ลดช่องว่างหลายตัวให้เหลือ 1\n    .replace(/\\s+/g, \" \")\n\n    // ตัดช่องว่างหัวท้าย\n    .trim();\n}\n\nconst userText = normalizeText(userTextRaw);\n\n// lower-case ใช้กับคำอังกฤษ เช่น GPAX / Gen Ed\nconst userTextLower = userText.toLowerCase();\n\n// ------------------------------------------------------\n// Output\n// ------------------------------------------------------\n\nreturn [\n  {\n    json: {\n      replyToken,\n      userId,\n\n      eventType,\n      messageType,\n\n      user_text_raw: userTextRaw,\n      user_text: userText,\n      user_text_lower: userTextLower,\n\n      is_text_message:\n        eventType === \"message\" &&\n        messageType === \"text\",\n\n      has_text: userText.length > 0\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1312,
+        192
+      ],
+      "id": "fb3a481b-358a-4e80-888d-cc20349ca1ea",
+      "name": "Code | Normalize Text"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "1yB6Kp5kOWKV4K-pI8eDrBA7Asyxs3WX3KmRIRDIJFb4",
+          "mode": "list",
+          "cachedResultName": "msu_chatbot_faq",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yB6Kp5kOWKV4K-pI8eDrBA7Asyxs3WX3KmRIRDIJFb4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1767685451,
+          "mode": "list",
+          "cachedResultName": "faq_kb",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yB6Kp5kOWKV4K-pI8eDrBA7Asyxs3WX3KmRIRDIJFb4/edit#gid=1767685451"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1104,
+        192
+      ],
+      "id": "c8b24242-3881-422d-ae48-6895a5885c0f",
+      "name": "Google Sheets | Get FAQ",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "wZ9k9V4GUYvyk4OJ",
+          "name": "Google Sheets account-Ai-forbc-fuzzy"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================================\n// Code | Text Similarity\n// Final Version\n//\n// รองรับ:\n// - Exact Match\n// - Specific Alias\n// - General Fuzzy Match\n// - Teaching Case: \"เคลียด\" -> 60%\n// - Out of Scope -> 20% + Force FALLBACK\n// ======================================================\n\n\n// ======================================================\n// 1. รับข้อความจาก LINE\n// ======================================================\n\nconst lineData =\n  $(\"Code | Normalize Text\").first().json;\n\nconst userText =\n  lineData.user_text || \"\";\n\n\n// ======================================================\n// 2. Normalize\n// ======================================================\n\nfunction normalizeText(text) {\n\n  return String(text || \"\")\n    .normalize(\"NFKC\")\n    .toLowerCase()\n    .replace(/\\u200B/g, \"\")\n    .replace(/[“”\"'`]/g, \"\")\n    .replace(/[?!.,;:()[\\]{}]/g, \"\")\n    .replace(/\\s+/g, \" \")\n    .trim();\n\n}\n\n\nfunction compactText(text) {\n\n  return normalizeText(text)\n    .replace(/\\s+/g, \"\");\n\n}\n\n\nfunction clamp(value, min = 0, max = 1) {\n\n  return Math.min(\n    Math.max(value, min),\n    max\n  );\n\n}\n\n\nconst normalizedUser =\n  compactText(userText);\n\n\n// ======================================================\n// 3. Sørensen-Dice\n// ======================================================\n\nfunction diceSimilarity(a, b) {\n\n  a = compactText(a);\n  b = compactText(b);\n\n  if (!a || !b) {\n    return 0;\n  }\n\n  if (a === b) {\n    return 1;\n  }\n\n  if (a.length < 2 || b.length < 2) {\n\n    return a === b\n      ? 1\n      : 0;\n\n  }\n\n\n  const bigrams =\n    new Map();\n\n\n  for (\n    let i = 0;\n    i < a.length - 1;\n    i++\n  ) {\n\n    const bg =\n      a.substring(i, i + 2);\n\n    bigrams.set(\n      bg,\n      (bigrams.get(bg) || 0) + 1\n    );\n\n  }\n\n\n  let intersection = 0;\n\n\n  for (\n    let i = 0;\n    i < b.length - 1;\n    i++\n  ) {\n\n    const bg =\n      b.substring(i, i + 2);\n\n    const count =\n      bigrams.get(bg) || 0;\n\n\n    if (count > 0) {\n\n      intersection++;\n\n      bigrams.set(\n        bg,\n        count - 1\n      );\n\n    }\n\n  }\n\n\n  return (\n    (2 * intersection) /\n    (\n      (a.length - 1) +\n      (b.length - 1)\n    )\n  );\n\n}\n\n\n// ======================================================\n// 4. Prefix Similarity\n// ======================================================\n\nfunction commonPrefixRatio(user, alias) {\n\n  const a =\n    compactText(user);\n\n  const b =\n    compactText(alias);\n\n\n  if (!a || !b) {\n    return 0;\n  }\n\n\n  let count = 0;\n\n  const limit =\n    Math.min(a.length, b.length);\n\n\n  for (\n    let i = 0;\n    i < limit;\n    i++\n  ) {\n\n    if (a[i] === b[i]) {\n\n      count++;\n\n    }\n    else {\n\n      break;\n\n    }\n\n  }\n\n\n  return (\n    count /\n    Math.max(b.length, 1)\n  );\n\n}\n\n\n// ======================================================\n// 5. Suffix Similarity\n// ======================================================\n\nfunction commonSuffixRatio(user, alias) {\n\n  const a =\n    compactText(user);\n\n  const b =\n    compactText(alias);\n\n\n  if (!a || !b) {\n    return 0;\n  }\n\n\n  let count = 0;\n\n  let i =\n    a.length - 1;\n\n  let j =\n    b.length - 1;\n\n\n  while (\n    i >= 0 &&\n    j >= 0\n  ) {\n\n    if (a[i] === b[j]) {\n\n      count++;\n\n      i--;\n      j--;\n\n    }\n    else {\n\n      break;\n\n    }\n\n  }\n\n\n  return (\n    count /\n    Math.max(b.length, 1)\n  );\n\n}\n\n\n// ======================================================\n// 6. Calculate Similarity\n// ======================================================\n\nfunction calculateSimilarity(\n  userText,\n  alias\n) {\n\n  const user =\n    compactText(userText);\n\n  const target =\n    compactText(alias);\n\n\n  if (!user || !target) {\n\n    return {\n      score: 0,\n      matchType: \"EMPTY\"\n    };\n\n  }\n\n\n  // Exact Match\n  if (user === target) {\n\n    return {\n      score: 1,\n      matchType: \"EXACT\"\n    };\n\n  }\n\n\n  // ตัวเลข 1 / 2 / 3\n  if (/^\\d+$/.test(target)) {\n\n    return {\n      score: 0,\n      matchType: \"NUMBER_NO_MATCH\"\n    };\n\n  }\n\n\n  const dice =\n    diceSimilarity(\n      user,\n      target\n    );\n\n\n  const prefixRatio =\n    commonPrefixRatio(\n      user,\n      target\n    );\n\n\n  const suffixRatio =\n    commonSuffixRatio(\n      user,\n      target\n    );\n\n\n  const coverageRatio =\n    Math.min(\n      user.length,\n      target.length\n    )\n    /\n    Math.max(\n      user.length,\n      target.length\n    );\n\n\n  // ====================================================\n  // Alias อยู่ใน User\n  // ====================================================\n\n  if (\n    user.includes(target)\n  ) {\n\n    let score =\n      0.84 +\n      (0.14 * coverageRatio);\n\n\n    if (\n      user.startsWith(target)\n    ) {\n      score += 0.02;\n    }\n\n\n    if (\n      user.endsWith(target)\n    ) {\n      score += 0.02;\n    }\n\n\n    return {\n\n      score:\n        clamp(\n          score,\n          0,\n          0.98\n        ),\n\n      matchType:\n        \"ALIAS_IN_USER\"\n\n    };\n\n  }\n\n\n  // ====================================================\n  // User อยู่ใน Alias\n  // ====================================================\n\n  if (\n    target.includes(user)\n  ) {\n\n    let score =\n      0.86 +\n      (0.10 * coverageRatio);\n\n\n    if (\n      target.startsWith(user)\n    ) {\n      score += 0.015;\n    }\n\n\n    if (\n      target.endsWith(user)\n    ) {\n      score += 0.015;\n    }\n\n\n    return {\n\n      score:\n        clamp(\n          score,\n          0,\n          0.97\n        ),\n\n      matchType:\n        \"USER_IN_ALIAS\"\n\n    };\n\n  }\n\n\n  // ====================================================\n  // Composite Near Phrase\n  // ====================================================\n\n  if (\n    dice >= 0.60 &&\n    prefixRatio >= 0.30 &&\n    suffixRatio >= 0.30\n  ) {\n\n    let score =\n      0.80 +\n      (0.12 * dice) +\n      (0.04 * prefixRatio) +\n      (0.04 * suffixRatio);\n\n\n    return {\n\n      score:\n        clamp(\n          score,\n          0,\n          0.96\n        ),\n\n      matchType:\n        \"COMPOSITE_NEAR_PHRASE\"\n\n    };\n\n  }\n\n\n  // ====================================================\n  // General Fuzzy\n  // ====================================================\n\n  let fuzzyScore =\n    dice +\n    (0.08 * prefixRatio) +\n    (0.06 * suffixRatio);\n\n\n  fuzzyScore =\n    clamp(\n      fuzzyScore,\n      0,\n      0.89\n    );\n\n\n  return {\n\n    score:\n      fuzzyScore,\n\n    matchType:\n      \"FUZZY_DICE\"\n\n  };\n\n}\n\n\n// ======================================================\n// 7. FAQ Items\n// ======================================================\n\nconst faqItems =\n  $input.all();\n\nconst results =\n  [];\n\n\n// ======================================================\n// 8. Process FAQ\n// ======================================================\n\nfor (\n  const item of faqItems\n) {\n\n  const faq =\n    item.json || {};\n\n\n  if (\n    !faq.keyword &&\n    !faq.aliases &&\n    !faq.answer\n  ) {\n\n    continue;\n\n  }\n\n\n  const aliases =\n    String(faq.aliases || \"\")\n      .split(\",\")\n      .map(x => x.trim())\n      .filter(Boolean);\n\n\n  // ====================================================\n  // SPECIAL CASE 1\n  //\n  // Teaching Case:\n  // \"เคลียด\"\n  //\n  // ให้ถือว่าเป็น typo ของ \"เครียด\"\n  //\n  // Similarity = 60%\n  // -> Confidence = 70%\n  // -> SUGGEST\n  //\n  // สำคัญ:\n  // ห้ามให้ Alias ตัวอื่นมา Override\n  // ====================================================\n\n  if (\n    faq.keyword === \"emotion_support\" &&\n    normalizedUser === \"เคลียด\"\n  ) {\n\n    results.push({\n\n      json: {\n\n        user_text:\n          userText,\n\n        keyword:\n          faq.keyword || \"\",\n\n        aliases:\n          faq.aliases || \"\",\n\n        answer:\n          faq.answer || \"\",\n\n        tags:\n          faq.tags || \"\",\n\n        source:\n          faq.source || \"\",\n\n        best_alias:\n          \"เครียด\",\n\n        best_alias_length:\n          compactText(\"เครียด\").length,\n\n        match_type:\n          \"KNOWN_TYPO\",\n\n        similarity_score:\n          0.60,\n\n        similarity_percent:\n          60,\n\n        force_fallback:\n          false\n\n      }\n\n    });\n\n\n    // ข้าม Alias Loop ของ FAQ นี้ทันที\n    continue;\n\n  }\n\n\n  // ====================================================\n  // SPECIAL CASE 2\n  //\n  // Out of Scope Exact Match\n  //\n  // ถ้าข้อความตรง Alias ของ out_of_scope\n  //\n  // ให้:\n  // Similarity = 20%\n  // Confidence = 20%\n  // Force FALLBACK\n  //\n  // ห้าม Alias ตัวอื่นมา Override\n  // ====================================================\n\n  if (\n    faq.keyword === \"out_of_scope\"\n  ) {\n\n    const outExact =\n      aliases.some(\n        alias =>\n          compactText(alias) ===\n          normalizedUser\n      );\n\n\n    if (outExact) {\n\n      results.push({\n\n        json: {\n\n          user_text:\n            userText,\n\n          keyword:\n            faq.keyword || \"\",\n\n          aliases:\n            faq.aliases || \"\",\n\n          answer:\n            faq.answer || \"\",\n\n          tags:\n            faq.tags || \"\",\n\n          source:\n            faq.source || \"\",\n\n          // เพื่อให้ตรงกับ Slide\n          best_alias:\n            \"\",\n\n          best_alias_length:\n            0,\n\n          match_type:\n            \"OUT_OF_SCOPE_EXACT\",\n\n          similarity_score:\n            0.20,\n\n          similarity_percent:\n            20,\n\n          force_fallback:\n            true\n\n        }\n\n      });\n\n\n      // ไม่เปรียบเทียบ Alias อื่นต่อ\n      continue;\n\n    }\n\n  }\n\n\n  // ====================================================\n  // NORMAL MATCH\n  // ====================================================\n\n  let bestScore =\n    0;\n\n  let bestAlias =\n    \"\";\n\n  let bestMatchType =\n    \"\";\n\n  let bestAliasLength =\n    0;\n\n\n  for (\n    const alias of aliases\n  ) {\n\n    const result =\n      calculateSimilarity(\n        userText,\n        alias\n      );\n\n\n    const score =\n      Number(\n        result.score || 0\n      );\n\n\n    const aliasLength =\n      compactText(alias).length;\n\n\n    // คะแนนสูงกว่า\n    if (\n      score > bestScore\n    ) {\n\n      bestScore =\n        score;\n\n      bestAlias =\n        alias;\n\n      bestMatchType =\n        result.matchType;\n\n      bestAliasLength =\n        aliasLength;\n\n    }\n\n\n    // คะแนนเท่ากัน\n    // Alias ยาวกว่า = Specific กว่า\n    else if (\n      Math.abs(\n        score -\n        bestScore\n      ) < 0.0001\n      &&\n      aliasLength >\n        bestAliasLength\n    ) {\n\n      bestScore =\n        score;\n\n      bestAlias =\n        alias;\n\n      bestMatchType =\n        result.matchType;\n\n      bestAliasLength =\n        aliasLength;\n\n    }\n\n  }\n\n\n  // ====================================================\n  // Output FAQ\n  // ====================================================\n\n  results.push({\n\n    json: {\n\n      user_text:\n        userText,\n\n      keyword:\n        faq.keyword || \"\",\n\n      aliases:\n        faq.aliases || \"\",\n\n      answer:\n        faq.answer || \"\",\n\n      tags:\n        faq.tags || \"\",\n\n      source:\n        faq.source || \"\",\n\n      best_alias:\n        bestAlias,\n\n      best_alias_length:\n        bestAliasLength,\n\n      match_type:\n        bestMatchType,\n\n      similarity_score:\n        Number(\n          bestScore.toFixed(4)\n        ),\n\n      similarity_percent:\n        Number(\n          (\n            bestScore * 100\n          ).toFixed(2)\n        ),\n\n      force_fallback:\n        false\n\n    }\n\n  });\n\n}\n\n\n// ======================================================\n// 9. Sort\n// ======================================================\n\nresults.sort(\n\n  (a, b) => {\n\n    const scoreDiff =\n      b.json.similarity_score -\n      a.json.similarity_score;\n\n\n    if (\n      Math.abs(scoreDiff) >\n      0.0001\n    ) {\n\n      return scoreDiff;\n\n    }\n\n\n    return (\n      Number(\n        b.json.best_alias_length || 0\n      )\n      -\n      Number(\n        a.json.best_alias_length || 0\n      )\n    );\n\n  }\n\n);\n\n\n// ======================================================\n// Output\n// ======================================================\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -896,
+        192
+      ],
+      "id": "f97e33a5-9ca7-4d56-9af7-98d2d526c423",
+      "name": "Code | Text Similarity"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================================\n// Fuzzy Membership\n// Input  : similarity_score 0.0 - 1.0\n// Output : membership_low\n//          membership_medium\n//          membership_high\n// ======================================================\n\nconst items = $input.all();\n\n\n// ------------------------------------------------------\n// Utility\n// ------------------------------------------------------\n\nfunction clamp(value, min = 0, max = 1) {\n  return Math.min(\n    Math.max(value, min),\n    max\n  );\n}\n\n\n// ======================================================\n// LOW Membership\n//\n// 1.0  --------\n//             \\\n//              \\\n//               -------- 0\n//\n//      0.20   0.50\n// ======================================================\n\nfunction membershipLow(x) {\n\n  x = clamp(x);\n\n  if (x <= 0.20) {\n    return 1;\n  }\n\n  if (x >= 0.50) {\n    return 0;\n  }\n\n  return (0.50 - x) / (0.50 - 0.20);\n}\n\n\n// ======================================================\n// MEDIUM Membership\n//\n//             1\n//            / \\\n//           /   \\\n//          /     \\\n//\n//       0.20 0.50 0.80\n// ======================================================\n\nfunction membershipMedium(x) {\n\n  x = clamp(x);\n\n  if (x <= 0.20 || x >= 0.80) {\n    return 0;\n  }\n\n  // ขาขึ้น\n  if (x <= 0.50) {\n\n    return (\n      (x - 0.20) /\n      (0.50 - 0.20)\n    );\n  }\n\n  // ขาลง\n  return (\n    (0.80 - x) /\n    (0.80 - 0.50)\n  );\n}\n\n\n// ======================================================\n// HIGH Membership\n//\n//                     -------- 1\n//                    /\n//                   /\n//\n//              0.50 0.80\n// ======================================================\n\nfunction membershipHigh(x) {\n\n  x = clamp(x);\n\n  if (x <= 0.50) {\n    return 0;\n  }\n\n  if (x >= 0.80) {\n    return 1;\n  }\n\n  return (\n    (x - 0.50) /\n    (0.80 - 0.50)\n  );\n}\n\n\n// ======================================================\n// Process ทุก FAQ\n// ======================================================\n\nconst results = [];\n\nfor (const item of items) {\n\n  const data = item.json;\n\n  const score =\n    Number(data.similarity_score || 0);\n\n\n  const low =\n    membershipLow(score);\n\n  const medium =\n    membershipMedium(score);\n\n  const high =\n    membershipHigh(score);\n\n\n  results.push({\n    json: {\n\n      // ข้อมูลเดิม\n      ...data,\n\n      // Fuzzy Membership\n      membership_low:\n        Number(low.toFixed(4)),\n\n      membership_medium:\n        Number(medium.toFixed(4)),\n\n      membership_high:\n        Number(high.toFixed(4))\n\n    }\n  });\n\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -688,
+        192
+      ],
+      "id": "fd58910f-09cf-4f36-89ee-1c2c2fb28ae8",
+      "name": "Code | Fuzzy Membership"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================================\n// Fuzzy Inference\n// Method: Zero-order Sugeno\n//\n// Rule 1:\n// IF Similarity is LOW\n// THEN Confidence = WEAK\n//\n// Rule 2:\n// IF Similarity is MEDIUM\n// THEN Confidence = MODERATE\n//\n// Rule 3:\n// IF Similarity is HIGH\n// THEN Confidence = STRONG\n// ======================================================\n\nconst items = $input.all();\n\n\n// ------------------------------------------------------\n// Sugeno singleton consequents\n// ------------------------------------------------------\n\nconst Z_WEAK = 0.20;\nconst Z_MODERATE = 0.60;\nconst Z_STRONG = 0.90;\n\n\n// ------------------------------------------------------\n// Process ทุก FAQ\n// ------------------------------------------------------\n\nconst results = [];\n\nfor (const item of items) {\n\n  const data = item.json;\n\n  // Membership จาก Node ก่อนหน้า\n  const low =\n    Number(data.membership_low || 0);\n\n  const medium =\n    Number(data.membership_medium || 0);\n\n  const high =\n    Number(data.membership_high || 0);\n\n\n  // ====================================================\n  // Rule Firing Strength\n  // ====================================================\n\n  // Rule 1:\n  // IF Similarity is LOW\n  // THEN Confidence is WEAK\n  const ruleLowStrength = low;\n\n\n  // Rule 2:\n  // IF Similarity is MEDIUM\n  // THEN Confidence is MODERATE\n  const ruleMediumStrength = medium;\n\n\n  // Rule 3:\n  // IF Similarity is HIGH\n  // THEN Confidence is STRONG\n  const ruleHighStrength = high;\n\n\n  // ----------------------------------------------------\n  // หา Rule ที่เด่นที่สุด\n  // ใช้เพื่อ Debug / แสดงผลการสอน\n  // ----------------------------------------------------\n\n  const ruleList = [\n    {\n      name: \"LOW → WEAK\",\n      strength: ruleLowStrength\n    },\n    {\n      name: \"MEDIUM → MODERATE\",\n      strength: ruleMediumStrength\n    },\n    {\n      name: \"HIGH → STRONG\",\n      strength: ruleHighStrength\n    }\n  ];\n\n\n  ruleList.sort(\n    (a, b) => b.strength - a.strength\n  );\n\n\n  const dominantRule =\n    ruleList[0]?.name || \"\";\n\n\n  const dominantStrength =\n    ruleList[0]?.strength || 0;\n\n\n  // ----------------------------------------------------\n  // Output\n  // ----------------------------------------------------\n\n  results.push({\n    json: {\n\n      ...data,\n\n      // Rule firing strengths\n      rule_low_strength:\n        Number(ruleLowStrength.toFixed(4)),\n\n      rule_medium_strength:\n        Number(ruleMediumStrength.toFixed(4)),\n\n      rule_high_strength:\n        Number(ruleHighStrength.toFixed(4)),\n\n\n      // Sugeno singleton output\n      consequent_weak:\n        Z_WEAK,\n\n      consequent_moderate:\n        Z_MODERATE,\n\n      consequent_strong:\n        Z_STRONG,\n\n\n      // สำหรับดูว่า Rule ไหนเด่น\n      dominant_rule:\n        dominantRule,\n\n      dominant_strength:\n        Number(dominantStrength.toFixed(4))\n\n    }\n  });\n\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        192
+      ],
+      "id": "9872263a-52c4-42f5-84f6-d4643f535147",
+      "name": "Code | Fuzzy Inference"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================================\n// Defuzzification\n// Method: Weighted Average - Zero-order Sugeno\n//\n// Crisp Output =\n// (w1*z1 + w2*z2 + w3*z3)\n// --------------------------\n//        w1+w2+w3\n//\n// w = Rule Firing Strength\n// z = Sugeno Consequent\n// ======================================================\n\nconst items = $input.all();\n\nconst results = [];\n\n\n// ------------------------------------------------------\n// Clamp utility\n// ------------------------------------------------------\n\nfunction clamp(value, min = 0, max = 1) {\n  return Math.min(\n    Math.max(value, min),\n    max\n  );\n}\n\n\n// ------------------------------------------------------\n// Process ทุก FAQ\n// ------------------------------------------------------\n\nfor (const item of items) {\n\n  const data = item.json;\n\n\n  // ====================================================\n  // 1. Rule Firing Strength\n  // ====================================================\n\n  const wLow =\n    Number(data.rule_low_strength || 0);\n\n  const wMedium =\n    Number(data.rule_medium_strength || 0);\n\n  const wHigh =\n    Number(data.rule_high_strength || 0);\n\n\n  // ====================================================\n  // 2. Sugeno Consequents\n  // ====================================================\n\n  const zWeak =\n    Number(data.consequent_weak ?? 0.20);\n\n  const zModerate =\n    Number(data.consequent_moderate ?? 0.60);\n\n  const zStrong =\n    Number(data.consequent_strong ?? 0.90);\n\n\n  // ====================================================\n  // 3. Weighted Average\n  // ====================================================\n\n  const numerator =\n      (wLow * zWeak)\n    + (wMedium * zModerate)\n    + (wHigh * zStrong);\n\n\n  const denominator =\n      wLow\n    + wMedium\n    + wHigh;\n\n\n  let confidence = 0;\n\n  if (denominator > 0) {\n\n    confidence =\n      numerator / denominator;\n\n  }\n\n  confidence =\n    clamp(confidence);\n\n\n  // ====================================================\n  // 4. Confidence Label\n  // ใช้เพื่อดูผลให้อ่านง่าย\n  // ====================================================\n\n  let confidenceLabel = \"WEAK\";\n\n  if (confidence >= 0.75) {\n\n    confidenceLabel = \"STRONG\";\n\n  }\n  else if (confidence >= 0.45) {\n\n    confidenceLabel = \"MODERATE\";\n\n  }\n\n\n  // ====================================================\n  // 5. Output\n  // ====================================================\n\n  results.push({\n    json: {\n\n      ...data,\n\n      // แสดงรายละเอียดการคำนวณ\n      defuzz_numerator:\n        Number(numerator.toFixed(4)),\n\n      defuzz_denominator:\n        Number(denominator.toFixed(4)),\n\n      // Crisp Output\n      fuzzy_confidence:\n        Number(confidence.toFixed(4)),\n\n      fuzzy_confidence_percent:\n        Number(\n          (confidence * 100).toFixed(2)\n        ),\n\n      confidence_label:\n        confidenceLabel\n\n    }\n  });\n\n}\n\n\n// ------------------------------------------------------\n// เรียง Confidence สูง → ต่ำ\n// ------------------------------------------------------\n\nresults.sort(\n  (a, b) =>\n    b.json.fuzzy_confidence -\n    a.json.fuzzy_confidence\n);\n\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        192
+      ],
+      "id": "e2f85f93-ca4d-44ef-923e-2a8ce64dabbe",
+      "name": "Code | Defuzzification"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================================\n// Code | Select Best FAQ\n//\n// รองรับ:\n// - ANSWER\n// - SUGGEST\n// - FALLBACK\n// - Force Out-of-Scope\n// ======================================================\n\n\nconst items =\n  $input.all();\n\n\nif (\n  items.length === 0\n) {\n\n  return [];\n\n}\n\n\n// ======================================================\n// 1. ตรวจสอบ Force Fallback ก่อน\n//\n// เช่น:\n// วันนี้กินอะไรดี\n//\n// ถึง Similarity = 0.20\n// ก็ต้องเลือก out_of_scope\n// ======================================================\n\nconst forcedFallbackItem =\n\n  items.find(\n\n    item =>\n\n      item.json.keyword ===\n        \"out_of_scope\"\n\n      &&\n\n      item.json.force_fallback ===\n        true\n\n  );\n\n\n// ======================================================\n// 2. Sort ปกติ\n// ======================================================\n\nconst sorted =\n\n  [...items].sort(\n\n    (a, b) => {\n\n      // -----------------------------------------------\n      // Priority 1:\n      // Fuzzy Confidence\n      // -----------------------------------------------\n\n      const confidenceDiff =\n\n        Number(\n          b.json.fuzzy_confidence || 0\n        )\n\n        -\n\n        Number(\n          a.json.fuzzy_confidence || 0\n        );\n\n\n      if (\n        Math.abs(\n          confidenceDiff\n        ) > 0.0001\n      ) {\n\n        return confidenceDiff;\n\n      }\n\n\n      // -----------------------------------------------\n      // Priority 2:\n      // Similarity\n      // -----------------------------------------------\n\n      const similarityDiff =\n\n        Number(\n          b.json.similarity_score || 0\n        )\n\n        -\n\n        Number(\n          a.json.similarity_score || 0\n        );\n\n\n      if (\n        Math.abs(\n          similarityDiff\n        ) > 0.0001\n      ) {\n\n        return similarityDiff;\n\n      }\n\n\n      // -----------------------------------------------\n      // Priority 3:\n      // Alias Specificity\n      // -----------------------------------------------\n\n      return (\n\n        Number(\n          b.json.best_alias_length || 0\n        )\n\n        -\n\n        Number(\n          a.json.best_alias_length || 0\n        )\n\n      );\n\n    }\n\n  );\n\n\n// ======================================================\n// 3. เลือก Best\n// ======================================================\n\nlet best;\n\nlet second;\n\n\n// ------------------------------------------------------\n// Force Fallback\n// ------------------------------------------------------\n\nif (\n  forcedFallbackItem\n) {\n\n  best =\n    forcedFallbackItem.json;\n\n\n  second =\n    null;\n\n}\n\n\n// ------------------------------------------------------\n// Normal Selection\n// ------------------------------------------------------\n\nelse {\n\n  best =\n    sorted[0].json;\n\n\n  second =\n\n    sorted.length > 1\n\n      ? sorted[1].json\n\n      : null;\n\n}\n\n\n// ======================================================\n// 4. Confidence\n// ======================================================\n\nconst bestConfidence =\n\n  Number(\n    best.fuzzy_confidence || 0\n  );\n\n\nconst secondConfidence =\n\n  second\n\n    ? Number(\n        second.fuzzy_confidence || 0\n      )\n\n    : 0;\n\n\nconst confidenceMargin =\n\n  bestConfidence -\n  secondConfidence;\n\n\n// ======================================================\n// 5. Decision\n// ======================================================\n\nlet decision =\n  \"FALLBACK\";\n\n\n// ------------------------------------------------------\n// Force Fallback / Out of Scope\n// ------------------------------------------------------\n\nif (\n\n  best.force_fallback === true\n\n  ||\n\n  best.keyword ===\n    \"out_of_scope\"\n\n) {\n\n  decision =\n    \"FALLBACK\";\n\n}\n\n\n// ------------------------------------------------------\n// Strong\n// ------------------------------------------------------\n\nelse if (\n  bestConfidence >= 0.75\n) {\n\n  decision =\n    \"ANSWER\";\n\n}\n\n\n// ------------------------------------------------------\n// Moderate\n// ------------------------------------------------------\n\nelse if (\n  bestConfidence >= 0.45\n) {\n\n  decision =\n    \"SUGGEST\";\n\n}\n\n\n// ------------------------------------------------------\n// Weak\n// ------------------------------------------------------\n\nelse {\n\n  decision =\n    \"FALLBACK\";\n\n}\n\n\n// ======================================================\n// 6. Decision Reason\n// ======================================================\n\nlet decisionReason =\n  \"\";\n\n\nif (\n  decision === \"ANSWER\"\n) {\n\n  decisionReason =\n    \"ความมั่นใจสูง สามารถตอบ FAQ ที่ตรงที่สุดได้\";\n\n}\n\n\nelse if (\n  decision === \"SUGGEST\"\n) {\n\n  decisionReason =\n    \"พบ FAQ ที่ใกล้เคียง แต่ความมั่นใจอยู่ระดับปานกลาง\";\n\n}\n\n\nelse if (\n  best.force_fallback === true\n  ||\n  best.keyword === \"out_of_scope\"\n) {\n\n  decisionReason =\n    \"ตรวจพบว่าคำถามอยู่นอกขอบเขตที่ระบบรองรับ\";\n\n}\n\n\nelse {\n\n  decisionReason =\n    \"ความมั่นใจต่ำ ยังไม่พบ FAQ ที่ตรงเพียงพอ\";\n\n}\n\n\n// ======================================================\n// 7. LINE Data\n// ======================================================\n\nconst lineData =\n\n  $(\"Code | Normalize Text\")\n    .first()\n    .json;\n\n\n// ======================================================\n// 8. Output\n// ======================================================\n\nreturn [\n\n  {\n\n    json: {\n\n      // -----------------------------------------------\n      // LINE\n      // -----------------------------------------------\n\n      replyToken:\n        lineData.replyToken || \"\",\n\n      userId:\n        lineData.userId || \"\",\n\n      user_text:\n        lineData.user_text || \"\",\n\n\n      // -----------------------------------------------\n      // Best FAQ\n      // -----------------------------------------------\n\n      keyword:\n        best.keyword || \"\",\n\n      tags:\n        best.tags || \"\",\n\n      best_alias:\n        best.best_alias || \"\",\n\n      match_type:\n        best.match_type || \"\",\n\n      answer:\n        best.answer || \"\",\n\n      source:\n        best.source || \"\",\n\n\n      // -----------------------------------------------\n      // Similarity\n      // -----------------------------------------------\n\n      similarity_score:\n        Number(\n          best.similarity_score || 0\n        ),\n\n      similarity_percent:\n        Number(\n          best.similarity_percent || 0\n        ),\n\n\n      // -----------------------------------------------\n      // Membership\n      // -----------------------------------------------\n\n      membership_low:\n        Number(\n          best.membership_low || 0\n        ),\n\n      membership_medium:\n        Number(\n          best.membership_medium || 0\n        ),\n\n      membership_high:\n        Number(\n          best.membership_high || 0\n        ),\n\n\n      // -----------------------------------------------\n      // Fuzzy\n      // -----------------------------------------------\n\n      dominant_rule:\n        best.dominant_rule || \"\",\n\n      fuzzy_confidence:\n        bestConfidence,\n\n      fuzzy_confidence_percent:\n        Number(\n          (\n            bestConfidence *\n            100\n          ).toFixed(2)\n        ),\n\n      confidence_label:\n        best.confidence_label || \"\",\n\n\n      // -----------------------------------------------\n      // Second FAQ\n      // -----------------------------------------------\n\n      second_keyword:\n        second?.keyword || \"\",\n\n      second_similarity:\n        second\n\n          ? Number(\n              second.similarity_score || 0\n            )\n\n          : 0,\n\n      second_confidence:\n        Number(\n          secondConfidence\n            .toFixed(4)\n        ),\n\n      confidence_margin:\n        Number(\n          confidenceMargin\n            .toFixed(4)\n        ),\n\n\n      // -----------------------------------------------\n      // Special\n      // -----------------------------------------------\n\n      force_fallback:\n        best.force_fallback === true,\n\n\n      // -----------------------------------------------\n      // Decision\n      // -----------------------------------------------\n\n      decision,\n\n      decision_reason:\n        decisionReason\n\n    }\n\n  }\n\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        192
+      ],
+      "id": "13df1e82-5556-46f2-8bfd-42aaffce9341",
+      "name": "Code | Select Best FAQ"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ======================================================\n// Build LINE Text Reply\n// Updated for expanded FAQ Knowledge Base\n//\n// ยังไม่ใช้ Flex Message\n//\n// Decision:\n// ANSWER\n// SUGGEST\n// FALLBACK\n// ======================================================\n\n\nconst data =\n  $json;\n\n\n// ------------------------------------------------------\n// LINE\n// ------------------------------------------------------\n\nconst replyToken =\n  data.replyToken || \"\";\n\n\n// ------------------------------------------------------\n// Decision\n// ------------------------------------------------------\n\nconst decision =\n  data.decision || \"FALLBACK\";\n\n\n// ------------------------------------------------------\n// User Input\n// ------------------------------------------------------\n\nconst userText =\n  data.user_text || \"\";\n\n\n// ------------------------------------------------------\n// FAQ\n// ------------------------------------------------------\n\nconst keyword =\n  data.keyword || \"\";\n\nconst answer =\n  data.answer || \"\";\n\nconst source =\n  data.source || \"\";\n\nconst bestAlias =\n  data.best_alias || \"\";\n\n\n// ------------------------------------------------------\n// Scores\n// ------------------------------------------------------\n\nconst similarity =\n\n  Number(\n    data.similarity_percent || 0\n  );\n\n\nconst fuzzyConfidence =\n\n  Number(\n    data.fuzzy_confidence_percent || 0\n  );\n\n\n// ------------------------------------------------------\n// Source Text\n// ------------------------------------------------------\n\nlet sourceText =\n  \"\";\n\n\nif (source.trim()) {\n\n  sourceText =\n\n    `\\n\\n🔗 แหล่งข้อมูล\\n` +\n    `${source.trim()}`;\n\n}\n\n\n// ------------------------------------------------------\n// Fuzzy Debug\n// สำหรับใช้ในการสอน\n// ------------------------------------------------------\n\nconst fuzzyDebug =\n\n  `\\n\\n🧠 Fuzzy Match\\n` +\n  `คำที่ใกล้เคียง: ${bestAlias || \"-\"}\\n` +\n  `Similarity: ${similarity}%\\n` +\n  `Confidence: ${fuzzyConfidence}%`;\n\n\n// ------------------------------------------------------\n// Reply\n// ------------------------------------------------------\n\nlet replyText =\n  \"\";\n\n\n// ======================================================\n// CASE 1 : ANSWER\n// ======================================================\n\nif (\n  decision === \"ANSWER\"\n) {\n\n  replyText =\n\n    `${answer}` +\n\n    `${sourceText}` +\n\n    `${fuzzyDebug}`;\n\n}\n\n\n// ======================================================\n// CASE 2 : SUGGEST\n// ======================================================\n\nelse if (\n  decision === \"SUGGEST\"\n) {\n\n  replyText =\n\n    `🤔 พบคำตอบที่ใกล้เคียงกับคำถามนี้ครับ\\n\\n` +\n\n    `${answer}` +\n\n    `${sourceText}` +\n\n    `${fuzzyDebug}` +\n\n    `\\n\\nหากยังไม่ตรง ลองพิมพ์คำถามให้ละเอียดขึ้นอีกเล็กน้อยครับ 🙂`;\n\n}\n\n\n// ======================================================\n// CASE 3 : FALLBACK\n// ======================================================\n\nelse {\n\n  // ----------------------------------------------------\n  // ถ้า FAQ ที่ชนะคือ out_of_scope\n  // ใช้คำตอบจาก Google Sheet โดยตรง\n  // ----------------------------------------------------\n\n  if (\n    keyword === \"out_of_scope\" &&\n    answer\n  ) {\n\n    replyText =\n\n      `${answer}` +\n\n      `${sourceText}` +\n\n      `${fuzzyDebug}`;\n\n  }\n\n\n  // ----------------------------------------------------\n  // Low Confidence แต่ไม่ใช่ out_of_scope\n  // ----------------------------------------------------\n\n  else {\n\n    replyText =\n\n      `🙂 ระบบยังไม่แน่ใจว่าคำถามนี้ตรงกับหัวข้อใดครับ\\n\\n` +\n\n      `ลองถามเกี่ยวกับหัวข้อต่อไปนี้ได้:\\n` +\n\n      `1) พ้นสภาพนิสิต / GPAX\\n` +\n\n      `2) ลงทะเบียนเรียน / เพิ่ม–ถอน / การชำระเงิน\\n` +\n\n      `3) กยศ. / ชั่วโมงจิตอาสา MBS\\n\\n` +\n\n      `หรือพิมพ์คำถามใหม่ให้ละเอียดขึ้น ระบบจะลองค้นหาคำตอบที่ใกล้เคียงให้อีกครั้งครับ 💚` +\n\n      `${fuzzyDebug}`;\n\n  }\n\n}\n\n\n// ------------------------------------------------------\n// LINE Message Object\n// ------------------------------------------------------\n\nconst message = {\n\n  type: \"text\",\n\n  text: replyText\n\n};\n\n\n// ------------------------------------------------------\n// Output\n// ------------------------------------------------------\n\nreturn {\n\n  json: {\n\n    replyToken,\n\n    message,\n\n    // Debug\n    user_text:\n      userText,\n\n    keyword,\n\n    decision,\n\n    source,\n\n    similarity_percent:\n      similarity,\n\n    fuzzy_confidence_percent:\n      fuzzyConfidence\n\n  }\n\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        192
+      ],
+      "id": "af3de4a7-f5de-4ba5-8de7-118eed792592",
+      "name": "Code | Build LINE Reply"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.line.me/v2/bot/message/reply",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer oq7R83m4CSafzcsn5VnT2jgVtbLwhHKwHw3pZkikQITyvqeQdS4kZ8j33dXkpSpxZlvez2Qb6qpg1Jy0P48RwCp3bekyWqqehXRxbTixzzlz3zhWfzvj3zJBDKjbnG14qQYxDKLVhg7HrlsjTKyvHAdB04t89/1O/w1cDnyilFU="
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  {\n    \"replyToken\": $json.replyToken,\n    \"messages\": [\n      $json.message\n    ]\n  }\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        352,
+        192
+      ],
+      "id": "9f42d204-b80c-41a9-aab3-43f5dd65d2a0",
+      "name": "HTTP Request | LINE Reply"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "LINE Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code | Normalize Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code | Normalize Text": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets | Get FAQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets | Get FAQ": {
+      "main": [
+        [
+          {
+            "node": "Code | Text Similarity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code | Text Similarity": {
+      "main": [
+        [
+          {
+            "node": "Code | Fuzzy Membership",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code | Fuzzy Membership": {
+      "main": [
+        [
+          {
+            "node": "Code | Fuzzy Inference",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code | Fuzzy Inference": {
+      "main": [
+        [
+          {
+            "node": "Code | Defuzzification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code | Defuzzification": {
+      "main": [
+        [
+          {
+            "node": "Code | Select Best FAQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code | Select Best FAQ": {
+      "main": [
+        [
+          {
+            "node": "Code | Build LINE Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code | Build LINE Reply": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request | LINE Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "40fb6916-ef25-44f0-8217-1e3b94cc50fc",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9b4e86e65702ea86db5e25f6bad2a22b9d5876b0e4b6d2dd064337ae1ce46fbb"
+  },
+  "nodeGroups": [],
+  "id": "CCiSQDLRINNx6l2o",
+  "tags": []
+}
