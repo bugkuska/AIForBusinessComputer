@@ -1,0 +1,293 @@
+{
+  "name": "LAB07-AI Review Analyzer",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1088,
+        -96
+      ],
+      "id": "ce01bf8a-f326-4d19-8921-1e1deeb094bb",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "1UF0Xh6L4nGZPAxOf96HGueR7N1FxIf7LAfmlGHnJPb8",
+          "mode": "list",
+          "cachedResultName": "AI_Review_Analyzer",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1UF0Xh6L4nGZPAxOf96HGueR7N1FxIf7LAfmlGHnJPb8/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1294759857,
+          "mode": "list",
+          "cachedResultName": "Reviews",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1UF0Xh6L4nGZPAxOf96HGueR7N1FxIf7LAfmlGHnJPb8/edit#gid=1294759857"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -880,
+        -96
+      ],
+      "id": "80eaa2a9-d71d-4170-b698-a4f481796208",
+      "name": "Google Sheets | Read Reviews",
+      "credentials": {
+        "googleApi": {
+          "id": "R7HvL3MQNYI0ecyM",
+          "name": "Google Sheets account-LAB7_AI_Review_Analyzer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=คุณเป็น AI สำหรับวิเคราะห์ความคิดเห็นของลูกค้าในงานธุรกิจ\n\nข้อมูลรีวิวที่ต้องวิเคราะห์\n\nReview ID:\n{{ $json.review_id }}\n\nReview Text:\n{{ $json.review_text }}\n\nวิเคราะห์รีวิวข้างต้นและส่งผลลัพธ์ดังนี้\n\n1. sentiment\nเลือกเพียงค่าเดียว:\nPositive\nNeutral\nNegative\n\nหลักเกณฑ์:\n- Positive = ลูกค้าพึงพอใจ ชื่นชม หรือมีประสบการณ์ที่ดี\n- Neutral = ไม่มีอารมณ์เชิงบวกหรือลบชัดเจน\n- Negative = ลูกค้าไม่พอใจ มีปัญหา หรือร้องเรียน\n\n2. topic\nเลือกหัวข้อหลักเพียง 1 ค่า:\nProduct Quality\nPrice\nDelivery\nService\nPackaging\nOther\n\n3. summary\nสรุปใจความสำคัญของรีวิวเป็นภาษาไทย 1 ประโยค\n\n4. recommendation\nเสนอแนะแนวทางสำหรับธุรกิจเป็นภาษาไทยสั้น ๆ 1 ประโยค\n\nวิเคราะห์จาก Review Text ที่ให้มาเท่านั้น\nห้ามแต่งข้อมูลเพิ่มเติม",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": []
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -672,
+        -96
+      ],
+      "id": "a0548a92-6eda-4639-ad6a-356e006ca9b0",
+      "name": "AI | Analyze Review"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"sentiment\": \"Positive\",\n  \"topic\": \"Product Quality\",\n  \"summary\": \"ลูกค้าพึงพอใจกับคุณภาพสินค้าและการจัดส่ง\",\n  \"recommendation\": \"ควรรักษามาตรฐานคุณภาพสินค้าและการจัดส่ง\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -544,
+        112
+      ],
+      "id": "034a07c6-fe92-4aef-97d8-10172f1bc43f",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        -784,
+        112
+      ],
+      "id": "b2289563-a79d-43ef-9b60-f93157fcf38f",
+      "name": "Google Gemini Chat Model-AIFor-BC-NLP",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "cCxR4WacTOcHXH7a",
+          "name": "Google Gemini(PaLM) Api account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1UF0Xh6L4nGZPAxOf96HGueR7N1FxIf7LAfmlGHnJPb8",
+          "mode": "list",
+          "cachedResultName": "AI_Review_Analyzer",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1UF0Xh6L4nGZPAxOf96HGueR7N1FxIf7LAfmlGHnJPb8/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1294759857,
+          "mode": "list",
+          "cachedResultName": "Reviews",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1UF0Xh6L4nGZPAxOf96HGueR7N1FxIf7LAfmlGHnJPb8/edit#gid=1294759857"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "review_id": "={{ $('Google Sheets | Read Reviews').item.json.review_id }}",
+            "sentiment": "={{ $json.output.sentiment }}",
+            "topic": "={{ $json.output.topic }}",
+            "summary": "={{ $json.output.summary }}",
+            "recommendation": "={{ $json.output.recommendation }}"
+          },
+          "matchingColumns": [
+            "review_id"
+          ],
+          "schema": [
+            {
+              "id": "review_id",
+              "displayName": "review_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "review_text",
+              "displayName": "review_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "topic",
+              "displayName": "topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recommendation",
+              "displayName": "recommendation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -320,
+        -96
+      ],
+      "id": "28d9ac34-ebb1-462d-a3a3-422bc8576a54",
+      "name": "Google Sheets | Update Results",
+      "credentials": {
+        "googleApi": {
+          "id": "R7HvL3MQNYI0ecyM",
+          "name": "Google Sheets account-LAB7_AI_Review_Analyzer"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets | Read Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets | Read Reviews": {
+      "main": [
+        [
+          {
+            "node": "AI | Analyze Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI | Analyze Review",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model-AIFor-BC-NLP": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI | Analyze Review",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI | Analyze Review": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets | Update Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "6bc26232-08e0-4cc2-b0b7-7b5b58e579ff",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9b4e86e65702ea86db5e25f6bad2a22b9d5876b0e4b6d2dd064337ae1ce46fbb"
+  },
+  "nodeGroups": [],
+  "id": "OzlabX8chvUA4evZ",
+  "tags": []
+}
